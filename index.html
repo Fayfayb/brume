@@ -702,7 +702,7 @@ svg.i { display: block; }
 
 #map { position: fixed; inset: 0; background: #0b0612; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .leaflet-container { background: #0b0612; font-family: var(--body); }
-#map.style-night .leaflet-tile-pane { filter: sepia(0.35) hue-rotate(235deg) saturate(1.7) brightness(1.08) contrast(1.05); }
+#map.style-night .leaflet-tile-pane { filter: invert(1) hue-rotate(195deg) saturate(1.5) brightness(0.92) contrast(1.15); }
 #map.style-satellite .leaflet-tile-pane { filter: saturate(1.25) contrast(1.08); }
 .leaflet-fog-pane { pointer-events: none; }
 .leaflet-fog-pane canvas { position: absolute; left: 0; top: 0; transition: opacity .15s; }
@@ -1005,22 +1005,18 @@ const Steps = {
 };
 
 /* ============ Carte ============ */
+const IGN = (layer, fmt) => `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}&STYLE=normal&TILEMATRIXSET=PM&FORMAT=${fmt}&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}`;
+const TILES = {
+  osm: () => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxNativeZoom: 19, maxZoom: 20, attribution: "© OpenStreetMap" }),
+  planIGN: () => L.tileLayer(IGN("GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2", "image/png"), { maxNativeZoom: 19, maxZoom: 20, attribution: "© IGN" }),
+  orthoIGN: () => L.tileLayer(IGN("ORTHOIMAGERY.ORTHOPHOTOS", "image/jpeg"), { maxNativeZoom: 19, maxZoom: 20, attribution: "© IGN" }),
+  esri: () => L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 19, maxZoom: 20, attribution: "© Esri" }),
+};
+// Pour chaque style : fond principal, puis fond de secours si le premier ne répond pas.
 const STYLES = {
-  night: {
-    label: "GPS de nuit", fog: "rgba(26, 9, 44, 0.93)", hatch: true,
-    layers: () => [L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 20, attribution: "© OpenStreetMap © CARTO" })],
-  },
-  satellite: {
-    label: "Satellite", fog: "rgba(18, 6, 32, 0.88)", hatch: true,
-    layers: () => [
-      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagerie © Esri" }),
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 20, attribution: "© OpenStreetMap © CARTO" }),
-    ],
-  },
-  day: {
-    label: "Plan de jour", fog: "rgba(102, 107, 120, 0.92)", hatch: false,
-    layers: () => [L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", { subdomains: "abcd", maxZoom: 20, attribution: "© OpenStreetMap © CARTO" })],
-  },
+  night: { label: "GPS de nuit", fog: "rgba(26, 9, 44, 0.93)", hatch: true, sources: ["osm", "planIGN"] },
+  satellite: { label: "Satellite", fog: "rgba(18, 6, 32, 0.88)", hatch: true, sources: ["orthoIGN", "esri"] },
+  day: { label: "Plan de jour", fog: "rgba(102, 107, 120, 0.92)", hatch: false, sources: ["planIGN", "osm"] },
 };
 let styleId = LS.get("brume.style", "night");
 if (!STYLES[styleId]) styleId = "night";
@@ -1031,11 +1027,22 @@ const map = L.map("map", { zoomControl: false, attributionControl: true, tapHold
 map.attributionControl.setPrefix(false);
 map.attributionControl.setPosition("topright");
 
-function applyStyle(id) {
+function applyStyle(id, sourceIndex = 0) {
   styleId = id; LS.set("brume.style", id);
   baseLayers.forEach((l) => map.removeLayer(l));
-  baseLayers = STYLES[id].layers();
-  baseLayers.forEach((l) => l.addTo(map));
+  const st = STYLES[id];
+  const layer = TILES[st.sources[sourceIndex]]();
+  let ok = 0, ko = 0, switched = false;
+  layer.on("tileload", () => { ok++; });
+  layer.on("tileerror", () => {
+    ko++;
+    if (!switched && ko >= 4 && ok === 0 && sourceIndex + 1 < st.sources.length && styleId === id) {
+      switched = true;
+      applyStyle(id, sourceIndex + 1);
+    }
+  });
+  baseLayers = [layer];
+  layer.addTo(map);
   $("#map").className = `style-${id}`;
   scheduleFog();
 }
@@ -1425,7 +1432,7 @@ function openList() {
 function openStyle() {
   openSheet(`<div class="sheet-head"><h2>Style de carte</h2><button class="link" id="ok">OK</button></div>
     <div class="sheet-body">${Object.entries(STYLES).map(([id, s]) => `<button class="menu-item ${id === styleId ? "sel" : ""}" data-s="${id}"><span class="grow">${s.label}</span>${id === styleId ? icon("check", 20) : ""}</button>`).join("")}
-    <p class="help">Style inspiré de l'ambiance néon de GTA 6, sans logo ni élément du jeu. Fonds de carte : CARTO, OpenStreetMap et Esri.</p></div>`, (el) => {
+    <p class="help">Style inspiré de l'ambiance néon de GTA 6, sans logo ni élément du jeu. Fonds de carte : OpenStreetMap, IGN et Esri.</p></div>`, (el) => {
     $("#ok", el).onclick = closeSheet;
     $$("[data-s]", el).forEach((b) => (b.onclick = () => { applyStyle(b.dataset.s); openStyle(); }));
   });
